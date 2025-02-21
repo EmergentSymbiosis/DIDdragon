@@ -240,3 +240,157 @@ if __name__ == "__main__":
     # Example: Enforce trust rules on a DID
     print(enforce_trust_policy(test_did))
 
+import sqlite3
+import logging
+import asyncio
+import json
+from datetime import datetime, timedelta
+
+# Set up logging
+logging.basicConfig(
+    filename='trust_recovery.log',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Initialize SQLite database
+conn = sqlite3.connect('did_trust_scores.db', check_same_thread=False)
+c = conn.cursor()
+
+# Create tables if they don't exist
+c.execute('''CREATE TABLE IF NOT EXISTS trust_recovery (
+                did TEXT PRIMARY KEY, 
+                recovery_stage TEXT,
+                last_attempt TIMESTAMP,
+                status TEXT DEFAULT 'pending'
+            )''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS trust_ledger (
+                did TEXT PRIMARY KEY,
+                trust_history TEXT
+            )''')
+
+conn.commit()
+
+### 🔥 Trust Repair Mechanism for Flagged DIDs
+def initiate_trust_recovery(did):
+    """Start a recovery process for a flagged DID."""
+    c.execute('SELECT flagged FROM did_scores WHERE did = ?', (did,))
+    result = c.fetchone()
+    
+    if not result or result[0] == 0:
+        logging.info(f"DID {did} is not flagged. No recovery needed.")
+        return "DID is not flagged."
+
+    c.execute('''INSERT INTO trust_recovery (did, recovery_stage, last_attempt, status)
+                 VALUES (?, ?, ?, 'pending') 
+                 ON CONFLICT(did) DO UPDATE SET last_attempt = ?''',
+              (did, 'start', datetime.now(), datetime.now()))
+    
+    conn.commit()
+    logging.info(f"Trust recovery process initiated for DID {did}.")
+    return f"Trust recovery started for {did}. Awaiting verification steps."
+
+### 🔥 Verification Challenge System for Reputation Recovery
+def verify_trust_recovery(did, verification_proof):
+    """Verify a DID's recovery attempt based on submitted proof."""
+    c.execute('SELECT status FROM trust_recovery WHERE did = ?', (did,))
+    result = c.fetchone()
+
+    if not result or result[0] != 'pending':
+        logging.info(f"DID {did} has no active recovery process.")
+        return "No active recovery process."
+
+    # 🔹 Placeholder: Implement actual proof validation with federated identity verification
+    verified = validate_verification_proof(verification_proof)
+
+    if verified:
+        c.execute('UPDATE trust_recovery SET status = "verified" WHERE did = ?', (did,))
+        unflag_did(did)
+        logging.info(f"DID {did} has successfully recovered trust.")
+        return f"DID {did} has recovered trust successfully."
+    else:
+        c.execute('UPDATE trust_recovery SET status = "rejected" WHERE did = ?', (did,))
+        logging.warning(f"Trust recovery for {did} failed.")
+        return f"DID {did} failed recovery verification."
+
+def validate_verification_proof(proof):
+    """Placeholder function to validate verification proof."""
+    # TODO: Implement actual verification logic (e.g., checking blockchain signatures, federated confirmations)
+    return proof == "valid_proof"
+
+### 🔥 Historical Trust Ledger for Trust Repair Speed
+def update_trust_ledger(did, trust_score):
+    """Store past trust scores for better recovery decisions."""
+    c.execute('SELECT trust_history FROM trust_ledger WHERE did = ?', (did,))
+    result = c.fetchone()
+
+    trust_history = json.loads(result[0]) if result else []
+
+    trust_history.append({"timestamp": str(datetime.now()), "trust_score": trust_score})
+
+    c.execute('''INSERT INTO trust_ledger (did, trust_history) VALUES (?, ?)
+                 ON CONFLICT(did) DO UPDATE SET trust_history = ?''', 
+              (did, json.dumps(trust_history), json.dumps(trust_history)))
+
+    conn.commit()
+    logging.info(f"Trust ledger updated for {did}.")
+
+### 🔥 Decay Model for Mistrust (Slower Recovery Over Time)
+def apply_decay_model(did):
+    """Slow down trust recovery if the DID has been flagged for a long time."""
+    c.execute('SELECT trust_history FROM trust_ledger WHERE did = ?', (did,))
+    result = c.fetchone()
+
+    if not result:
+        return 1  # Default recovery speed for new DIDs
+
+    trust_history = json.loads(result[0])
+    oldest_entry = min(trust_history, key=lambda x: datetime.strptime(x['timestamp'], '%Y-%m-%d %H:%M:%S.%f'))
+    time_since_first_flag = datetime.now() - datetime.strptime(oldest_entry['timestamp'], '%Y-%m-%d %H:%M:%S.%f')
+
+    # Decay model: slow recovery if flagged for over 6 months
+    return 0.5 if time_since_first_flag > timedelta(days=180) else 1
+
+### 🔥 Automated Gradual Trust Score Adjustments Based on Recovery Progress
+async def periodic_trust_repair():
+    """Periodically attempt to repair flagged DIDs' trust scores based on recovery progress."""
+    while True:
+        c.execute('SELECT did FROM trust_recovery WHERE status = "pending"')
+        dids = c.fetchall()
+
+        for (did,) in dids:
+            recovery_multiplier = apply_decay_model(did)
+            current_score = get_current_trust_score(did)
+            new_score = min(current_score + (0.1 * recovery_multiplier), 1.0)
+            update_trust_score(did, new_score)
+            logging.info(f"Gradual trust recovery applied to {did}, new score: {new_score}")
+
+        await asyncio.sleep(24 * 60 * 60)  # Run every 24 hours
+
+# Helper functions (replace with actual database logic)
+def get_current_trust_score(did):
+    c.execute('SELECT score FROM did_scores WHERE did = ?', (did,))
+    result = c.fetchone()
+    return result[0] if result else 0.0
+
+def update_trust_score(did, new_score):
+    c.execute('UPDATE did_scores SET score = ? WHERE did = ?', (new_score, did))
+    conn.commit()
+
+def unflag_did(did):
+    """Remove a flag from a DID if trust score improves."""
+    c.execute('UPDATE did_scores SET flagged = 0 WHERE did = ?', (did,))
+    conn.commit()
+    logging.info(f"DID {did} has been restored to normal status.")
+
+# Example Usage
+if __name__ == "__main__":
+    test_did = 'did:ethr:123456789abcdef'
+    print(initiate_trust_recovery(test_did))
+    print(verify_trust_recovery(test_did, "valid_proof"))
+    update_trust_ledger(test_did, get_current_trust_score(test_did))
+    # loop = asyncio.get_event_loop()
+    # loop.run_until_complete(periodic_trust_repair())
+
+
