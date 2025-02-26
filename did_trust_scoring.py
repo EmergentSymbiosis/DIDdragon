@@ -1,4 +1,6 @@
+import os
 import sqlite3
+import psycopg2
 from datetime import datetime
 import asyncio
 import logging
@@ -6,17 +8,63 @@ import logging
 # Set up logging
 logging.basicConfig(filename='trust_scoring.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Initialize SQLite database
-conn = sqlite3.connect('did_trust_scores.db', check_same_thread=False)
+# Database configuration
+DATABASE_CONFIG = {
+    'default': os.getenv('DB_BACKEND', 'sqlite'),  # Default to SQLite unless specified
+    'backends': {
+        'sqlite': {
+            'ENGINE': 'sqlite3',
+            'NAME': os.getenv('SQLITE_DB_NAME', 'did_trust_scores.db')
+        },
+        'postgresql': {
+            'ENGINE': 'postgresql',
+            'NAME': os.getenv('POSTGRESQL_DB_NAME', 'trust_db'),
+            'USER': os.getenv('POSTGRESQL_DB_USER', 'user'),
+            'PASSWORD': os.getenv('POSTGRESQL_DB_PASSWORD', 'password'),
+            'HOST': os.getenv('POSTGRESQL_DB_HOST', 'localhost'),
+            'PORT': os.getenv('POSTGRESQL_DB_PORT', '5432')
+        }
+    }
+}
+
+# Get database connection
+def get_database_connection():
+    backend = DATABASE_CONFIG['default']
+    if backend == 'sqlite':
+        return sqlite3.connect(DATABASE_CONFIG['backends']['sqlite']['NAME'], check_same_thread=False)
+    elif backend == 'postgresql':
+        return psycopg2.connect(
+            dbname=DATABASE_CONFIG['backends']['postgresql']['NAME'],
+            user=DATABASE_CONFIG['backends']['postgresql']['USER'],
+            password=DATABASE_CONFIG['backends']['postgresql']['PASSWORD'],
+            host=DATABASE_CONFIG['backends']['postgresql']['HOST'],
+            port=DATABASE_CONFIG['backends']['postgresql']['PORT']
+        )
+    else:
+        raise ValueError("Unsupported database backend")
+
+# Initialize database connection
+conn = get_database_connection()
 c = conn.cursor()
 
-# Create tables if they don't exist
+# Create tables for trust scores
 c.execute('''
     CREATE TABLE IF NOT EXISTS did_scores (
         did TEXT PRIMARY KEY, 
-        score REAL
+        score REAL,
+        flagged INTEGER DEFAULT 0
     )
 ''')
+
+c.execute('''
+    CREATE TABLE IF NOT EXISTS policy_rules (
+        rule_id SERIAL PRIMARY KEY,
+        rule_name TEXT UNIQUE,
+        min_trust_score REAL,
+        action TEXT  -- Actions: "alert", "restrict", "review"
+    )
+''')
+
 conn.commit()
 
 # Function to insert trust scores securely (prevents duplicates)
