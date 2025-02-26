@@ -67,13 +67,36 @@ c.execute('''
 
 conn.commit()
 
-# Function to insert trust scores securely (prevents duplicates)
+import hashlib
+import json
+from datetime import datetime
+
+def hash_trust_score(did, score, timestamp):
+    """Generate a tamper-proof hash for a trust score entry."""
+    data = f"{did}|{score}|{timestamp}"
+    return hashlib.sha256(data.encode()).hexdigest()
+
 def insert_trust_score(did, score):
-    """Insert or update a DID trust score."""
-    c.execute('INSERT INTO did_scores (did, score) VALUES (?, ?) ON CONFLICT(did) DO UPDATE SET score=?', 
-              (did, score, score))
+    """Insert or update a DID trust score with cryptographic proof."""
+    timestamp = datetime.utcnow().isoformat()
+    score_hash = hash_trust_score(did, score, timestamp)
+
+    c.execute('''
+        INSERT INTO did_scores (did, score, flagged) 
+        VALUES (?, ?, 0)
+        ON CONFLICT(did) DO UPDATE SET score = ?;
+    ''', (did, score, score))
+
+    c.execute('''
+        INSERT INTO trust_ledger (did, trust_history)
+        VALUES (?, ?)
+        ON CONFLICT(did) DO UPDATE SET trust_history = ?;
+    ''', (did, json.dumps([{"timestamp": timestamp, "trust_score": score, "hash": score_hash}]), 
+          json.dumps([{"timestamp": timestamp, "trust_score": score, "hash": score_hash}])))
+
     conn.commit()
-    logging.debug(f'Inserted/Updated trust score for {did}: {score}')
+    logging.debug(f'Inserted/Updated trust score for {did}: {score} | Hash: {score_hash}')
+
 
 # Function to retrieve trust scores securely
 def get_trust_score(did):
