@@ -1,10 +1,11 @@
 import re
 import asyncio
+import argparse
 
 class DIDVerifier:
     def __init__(self):
         self.did_patterns = {
-            'ethr': r'^did:ethr:[0-9a-fA-F]{40}$',
+            'ethr': r'^did:ethr:(?:0x)?[0-9a-fA-F]{40}$',
             'sol': r'^did:sol:[1-9A-HJ-NP-Za-km-z]{32,44}$',
             'w3c': r'^did:w3c:[1-9a-zA-Z_-]+$',
             'agent': r'^did:agent:[a-zA-Z0-9_-]+$',  # New pattern for AI agents
