@@ -4,6 +4,8 @@ import psycopg2
 from datetime import datetime
 import asyncio
 import logging
+import json
+import hashlib
 
 # Set up logging
 logging.basicConfig(filename='trust_scoring.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,33 +49,39 @@ def get_database_connection():
 conn = get_database_connection()
 c = conn.cursor()
 
-# Create tables for trust scores
-c.execute('''
-    CREATE TABLE IF NOT EXISTS did_scores (
-        did TEXT PRIMARY KEY, 
-        score REAL,
-        flagged INTEGER DEFAULT 0
-    )
-''')
+# Initialize database and create tables
+def init_db():
+    """Initialize all database tables."""
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS did_scores (
+            did TEXT PRIMARY KEY, 
+            score REAL,
+            flagged INTEGER DEFAULT 0
+        )
+    ''')
 
-c.execute('''
-    CREATE TABLE IF NOT EXISTS policy_rules (
-        rule_id SERIAL PRIMARY KEY,
-        rule_name TEXT UNIQUE,
-        min_trust_score REAL,
-        action TEXT  -- Actions: "alert", "restrict", "review"
-    )
-''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS policy_rules (
+            rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_name TEXT UNIQUE,
+            min_trust_score REAL,
+            action TEXT
+        )
+    ''')
 
-conn.commit()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS trust_ledger (
+            did TEXT PRIMARY KEY,
+            trust_history TEXT
+        )
+    ''')
 
-import hashlib
-import json
-from datetime import datetime
+    conn.commit()
+    logging.info("Database tables initialized successfully")
 
 def hash_trust_score(did, score, timestamp):
-    """Generate a tamper-proof hash for a trust score entry."""
-    data = f"{did}|{score}|{timestamp}"
+    """Create a hash of the trust score data for verification."""
+    data = f"{did}:{score}:{timestamp}"
     return hashlib.sha256(data.encode()).hexdigest()
 
 def insert_trust_score(did, score):
@@ -96,7 +104,6 @@ def insert_trust_score(did, score):
 
     conn.commit()
     logging.debug(f'Inserted/Updated trust score for {did}: {score} | Hash: {score_hash}')
-
 
 # Function to retrieve trust scores securely
 def get_trust_score(did):
@@ -185,6 +192,7 @@ async def aggregate_trust_score(did):
 
 # Example Usage, disabled during manual testing
 if __name__ == "__main__":
+    init_db()  # Initialize database before running main logic
     loop = asyncio.get_event_loop()
     test_did = 'did:ethr:123456789abcdef'
     final_score = loop.run_until_complete(aggregate_trust_score(test_did))
@@ -472,5 +480,42 @@ if __name__ == "__main__":
     update_trust_ledger(test_did, get_current_trust_score(test_did))
     # loop = asyncio.get_event_loop()
     # loop.run_until_complete(periodic_trust_repair())
+
+def init_db():
+    """Initialize the database and create tables if they don't exist."""
+    conn = sqlite3.connect('trust_scores.db')
+    c = conn.cursor()
+    
+    # Create trust_ledger table if it doesn't exist
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS trust_ledger (
+            did TEXT PRIMARY KEY,
+            trust_score REAL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def insert_trust_score(did, trust_score):
+    """Insert or update trust score for a DID."""
+    conn = sqlite3.connect('trust_scores.db')
+    c = conn.cursor()
+    
+    c.execute('''
+        INSERT OR REPLACE INTO trust_ledger (did, trust_score)
+        VALUES (?, ?)
+    ''', (did, trust_score))
+    
+    conn.commit()
+    conn.close()
+
+# Call init_db at the start of the program
+if __name__ == "__main__":
+    init_db()  # Initialize database before running main logic
+    # ... rest of your main code ...
+
+
 
 
