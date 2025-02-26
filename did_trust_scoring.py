@@ -407,9 +407,10 @@ def update_trust_ledger(did, trust_score):
     conn.commit()
     logging.info(f"Trust ledger updated for {did}.")
 
-### 🔥 Decay Model for Mistrust (Slower Recovery Over Time)
+from datetime import timedelta
+
 def apply_decay_model(did):
-    """Slow down trust recovery if the DID has been flagged for a long time."""
+    """Apply dynamic trust decay based on behavior & inactivity."""
     c.execute('SELECT trust_history FROM trust_ledger WHERE did = ?', (did,))
     result = c.fetchone()
 
@@ -417,11 +418,19 @@ def apply_decay_model(did):
         return 1  # Default recovery speed for new DIDs
 
     trust_history = json.loads(result[0])
-    oldest_entry = min(trust_history, key=lambda x: datetime.strptime(x['timestamp'], '%Y-%m-%d %H:%M:%S.%f'))
-    time_since_first_flag = datetime.now() - datetime.strptime(oldest_entry['timestamp'], '%Y-%m-%d %H:%M:%S.%f')
+    oldest_entry = min(trust_history, key=lambda x: datetime.fromisoformat(x['timestamp']))
+    time_since_first_flag = datetime.utcnow() - datetime.fromisoformat(oldest_entry['timestamp'])
 
-    # Decay model: slow recovery if flagged for over 6 months
-    return 0.5 if time_since_first_flag > timedelta(days=180) else 1
+    # Decay is more aggressive if flagged multiple times
+    c.execute('SELECT flagged FROM did_scores WHERE did = ?', (did,))
+    flagged_result = c.fetchone()
+    is_flagged = flagged_result[0] if flagged_result else 0
+
+    # Decay model: faster decay for flagged users, slower for active ones
+    if is_flagged:
+        return 0.3 if time_since_first_flag > timedelta(days=180) else 0.6  # Stronger penalty for flagged users
+    else:
+        return 0.8 if time_since_first_flag > timedelta(days=180) else 1  # Slower decay for normal users
 
 ### 🔥 Automated Gradual Trust Score Adjustments Based on Recovery Progress
 async def periodic_trust_repair():
