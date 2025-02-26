@@ -6,9 +6,21 @@ import asyncio
 import logging
 import json
 import hashlib
+import time
 
 # Set up logging
 logging.basicConfig(filename='trust_scoring.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def init_wal_mode():
+    """Enable SQLite WAL mode to prevent database locking."""
+    try:
+        with sqlite3.connect('did_trust_scores.db') as conn:
+            conn.execute('PRAGMA journal_mode=WAL')
+            conn.commit()
+            logging.info("WAL mode initialized successfully")
+    except Exception as e:
+        logging.error(f"Error initializing WAL mode: {e}")
+        raise
 
 # Database configuration
 DATABASE_CONFIG = {
@@ -31,10 +43,10 @@ DATABASE_CONFIG = {
 
 # Get database connection
 def get_database_connection():
-    backend = DATABASE_CONFIG['default']
-    if backend == 'sqlite':
-        return sqlite3.connect(DATABASE_CONFIG['backends']['sqlite']['NAME'], check_same_thread=False)
-    elif backend == 'postgresql':
+    """Get a new database connection."""
+    if DATABASE_CONFIG['default'] == 'sqlite':
+        return sqlite3.connect('did_trust_scores.db', timeout=30, isolation_level=None)
+    elif DATABASE_CONFIG['default'] == 'postgresql':
         return psycopg2.connect(
             dbname=DATABASE_CONFIG['backends']['postgresql']['NAME'],
             user=DATABASE_CONFIG['backends']['postgresql']['USER'],
@@ -52,32 +64,42 @@ c = conn.cursor()
 # Initialize database and create tables
 def init_db():
     """Initialize all database tables."""
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS did_scores (
-            did TEXT PRIMARY KEY, 
-            score REAL,
-            flagged INTEGER DEFAULT 0
-        )
-    ''')
+    try:
+        with get_database_connection() as conn:
+            c = conn.cursor()
+            
+            # Create did_scores table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS did_scores (
+                    did TEXT PRIMARY KEY, 
+                    score REAL,
+                    flagged INTEGER DEFAULT 0
+                )
+            ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS policy_rules (
-            rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            rule_name TEXT UNIQUE,
-            min_trust_score REAL,
-            action TEXT
-        )
-    ''')
+            # Create policy_rules table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS policy_rules (
+                    rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_name TEXT UNIQUE,
+                    min_trust_score REAL,
+                    action TEXT
+                )
+            ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS trust_ledger (
-            did TEXT PRIMARY KEY,
-            trust_history TEXT
-        )
-    ''')
+            # Create trust_ledger table
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS trust_ledger (
+                    did TEXT PRIMARY KEY,
+                    trust_history TEXT
+                )
+            ''')
 
-    conn.commit()
-    logging.info("Database tables initialized successfully")
+            conn.commit()
+            logging.info("Database tables initialized successfully")
+    except Exception as e:
+        logging.error(f"Error initializing database: {e}")
+        raise
 
 def hash_trust_score(did, score, timestamp):
     """Create a hash of the trust score data for verification."""
@@ -86,24 +108,30 @@ def hash_trust_score(did, score, timestamp):
 
 def insert_trust_score(did, score):
     """Insert or update a DID trust score with cryptographic proof."""
-    timestamp = datetime.utcnow().isoformat()
-    score_hash = hash_trust_score(did, score, timestamp)
+    try:
+        with get_database_connection() as conn:
+            c = conn.cursor()
+            timestamp = datetime.utcnow().isoformat()
+            score_hash = hash_trust_score(did, score, timestamp)
 
-    c.execute('''
-        INSERT INTO did_scores (did, score, flagged) 
-        VALUES (?, ?, 0)
-        ON CONFLICT(did) DO UPDATE SET score = ?;
-    ''', (did, score, score))
+            c.execute('''
+                INSERT INTO did_scores (did, score, flagged) 
+                VALUES (?, ?, 0)
+                ON CONFLICT(did) DO UPDATE SET score = ?;
+            ''', (did, score, score))
 
-    c.execute('''
-        INSERT INTO trust_ledger (did, trust_history)
-        VALUES (?, ?)
-        ON CONFLICT(did) DO UPDATE SET trust_history = ?;
-    ''', (did, json.dumps([{"timestamp": timestamp, "trust_score": score, "hash": score_hash}]), 
-          json.dumps([{"timestamp": timestamp, "trust_score": score, "hash": score_hash}])))
+            c.execute('''
+                INSERT INTO trust_ledger (did, trust_history)
+                VALUES (?, ?)
+                ON CONFLICT(did) DO UPDATE SET trust_history = ?;
+            ''', (did, json.dumps([{"timestamp": timestamp, "trust_score": score, "hash": score_hash}]), 
+                  json.dumps([{"timestamp": timestamp, "trust_score": score, "hash": score_hash}])))
 
-    conn.commit()
-    logging.debug(f'Inserted/Updated trust score for {did}: {score} | Hash: {score_hash}')
+            conn.commit()
+            logging.debug(f'Inserted/Updated trust score for {did}: {score} | Hash: {score_hash}')
+    except Exception as e:
+        logging.error(f"Error inserting trust score for {did}: {e}")
+        raise
 
 # Function to retrieve trust scores securely
 def get_trust_score(did):
@@ -152,6 +180,9 @@ async def fetch_social_signals(did):
 # Function to aggregate trust scores from all sources
 async def aggregate_trust_score(did):
     """Aggregate and compute a trust score for a DID."""
+    # Make sure database is initialized first
+    init_db()
+    
     onchain_data = await fetch_onchain_proofs(did)
     federated_data = await fetch_federated_nodes(did)
     usage_data = await fetch_usage_patterns(did)
@@ -192,14 +223,30 @@ async def aggregate_trust_score(did):
 
 # Example Usage, disabled during manual testing
 if __name__ == "__main__":
-    init_db()  # Initialize database before running main logic
-    loop = asyncio.get_event_loop()
-    test_did = 'did:ethr:123456789abcdef'
-    final_score = loop.run_until_complete(aggregate_trust_score(test_did))
-    print(f"Final Trust Score for {test_did}: {final_score}")
-
-    # Start periodic updates (disabled for manual testing)
-    # loop.run_until_complete(update_trust_scores())
+    try:
+        # Initialize WAL mode before any other database operations
+        init_wal_mode()
+        
+        # Initialize database tables
+        init_db()
+        
+        # Create event loop
+        loop = asyncio.get_event_loop()
+        
+        # Test DID
+        test_did = 'did:ethr:123456789abcdef'
+        
+        # Run the trust score calculation
+        final_score = loop.run_until_complete(aggregate_trust_score(test_did))
+        
+        # Print results
+        print(f"Final Trust Score for {test_did}: {final_score}")
+        
+        # Clean up
+        loop.close()
+    except Exception as e:
+        logging.error(f"Error in main: {e}")
+        raise
 
 import sqlite3
 import logging
@@ -236,32 +283,38 @@ conn.commit()
 ### 🔥 Policy Engine: Enforce Trust-Based Actions
 def enforce_trust_policy(did):
     """Evaluate a DID against trust policies and determine actions."""
-    c.execute('SELECT score FROM did_scores WHERE did = ?', (did,))
-    result = c.fetchone()
-    
-    if not result:
-        logging.warning(f"DID {did} not found in trust scores.")
-        return "DID not found"
+    try:
+        with get_database_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT score FROM did_scores WHERE did = ?', (did,))
+            result = c.fetchone()
+            
+            if not result:
+                logging.warning(f"DID {did} not found in trust scores.")
+                return "DID not found"
 
-    trust_score = result[0]
+            trust_score = result[0]
 
-    # Fetch active rules
-    c.execute('SELECT rule_name, min_trust_score, action FROM policy_rules')
-    rules = c.fetchall()
+            # Fetch active rules
+            c.execute('SELECT rule_name, min_trust_score, action FROM policy_rules')
+            rules = c.fetchall()
 
-    for rule_name, min_score, action in rules:
-        if trust_score < min_score:
-            logging.warning(f"DID {did} flagged under rule '{rule_name}' - Action: {action}")
+            for rule_name, min_score, action in rules:
+                if trust_score < min_score:
+                    logging.warning(f"DID {did} flagged under rule '{rule_name}' - Action: {action}")
 
-            if action == "alert":
-                return f"DID {did} triggered an alert under rule '{rule_name}'."
-            elif action == "restrict":
-                flag_did(did)
-                return f"DID {did} has been restricted under rule '{rule_name}'."
-            elif action == "review":
-                return f"DID {did} requires manual review under rule '{rule_name}'."
+                    if action == "alert":
+                        return f"DID {did} triggered an alert under rule '{rule_name}'."
+                    elif action == "restrict":
+                        flag_did(did)
+                        return f"DID {did} has been restricted under rule '{rule_name}'."
+                    elif action == "review":
+                        return f"DID {did} requires manual review under rule '{rule_name}'."
 
-    return f"DID {did} passes all trust policies."
+            return f"DID {did} passes all trust policies."
+    except Exception as e:
+        logging.error(f"Error enforcing trust policy for {did}: {e}")
+        raise
 
 ### 🔥 Flagging System for Risky DIDs
 def flag_did(did):
@@ -400,20 +453,58 @@ def validate_verification_proof(proof):
 
 ### 🔥 Historical Trust Ledger for Trust Repair Speed
 def update_trust_ledger(did, trust_score):
-    """Store past trust scores for better recovery decisions."""
-    c.execute('SELECT trust_history FROM trust_ledger WHERE did = ?', (did,))
-    result = c.fetchone()
+    """Update trust ledger with retry logic to prevent database lock errors."""
+    retries = 5  # Number of retries before failing
+    delay = 0.5  # Initial delay for retrying
 
-    trust_history = json.loads(result[0]) if result else []
+    for attempt in range(retries):
+        try:
+            with sqlite3.connect('did_trust_scores.db', timeout=10, check_same_thread=False) as conn:
+                conn.execute('PRAGMA wal_checkpoint(TRUNCATE);')  # Clear WAL
+                conn.execute('PRAGMA journal_mode=WAL')  # Ensure WAL mode
+                conn.execute('PRAGMA busy_timeout = 5000;')  # Increase timeout
+                
+                c = conn.cursor()
+                c.execute("PRAGMA quick_check;")  # Check if DB is corrupted
+                
+                # Ensure transaction safety
+                conn.execute('BEGIN IMMEDIATE;')  
+                
+                # Get existing trust history
+                c.execute('SELECT trust_history FROM trust_ledger WHERE did = ?', (did,))
+                result = c.fetchone()
 
-    trust_history.append({"timestamp": str(datetime.now()), "trust_score": trust_score})
+                # Update trust history
+                trust_history = json.loads(result[0]) if result else []
+                trust_history.append({
+                    "timestamp": str(datetime.now()),
+                    "trust_score": trust_score
+                })
 
-    c.execute('''INSERT INTO trust_ledger (did, trust_history) VALUES (?, ?)
-                 ON CONFLICT(did) DO UPDATE SET trust_history = ?''', 
-              (did, json.dumps(trust_history), json.dumps(trust_history)))
-
-    conn.commit()
-    logging.info(f"Trust ledger updated for {did}.")
+                # Insert or update with new history
+                c.execute('''
+                    INSERT INTO trust_ledger (did, trust_history) 
+                    VALUES (?, ?)
+                    ON CONFLICT(did) DO UPDATE SET trust_history = ?
+                ''', (
+                    did, 
+                    json.dumps(trust_history), 
+                    json.dumps(trust_history)
+                ))
+                
+                conn.commit()  # Commit transaction
+                return  # Exit if successful
+                
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                logging.warning(f"⚠️ Database is locked. Retrying {attempt+1}/{retries}...")
+                time.sleep(delay * (attempt + 1))  # Exponential backoff
+            else:
+                logging.error(f"Database error: {e}")
+                raise
+        except Exception as e:
+            logging.error(f"Error updating trust ledger for {did}: {e}")
+            raise
 
 from datetime import timedelta
 
@@ -458,9 +549,16 @@ async def periodic_trust_repair():
 
 # Helper functions (replace with actual database logic)
 def get_current_trust_score(did):
-    c.execute('SELECT score FROM did_scores WHERE did = ?', (did,))
-    result = c.fetchone()
-    return result[0] if result else 0.0
+    """Get the current trust score for a DID."""
+    try:
+        with get_database_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT score FROM did_scores WHERE did = ?', (did,))
+            result = c.fetchone()
+            return result[0] if result else 0.0
+    except Exception as e:
+        logging.error(f"Error getting trust score for {did}: {e}")
+        return 0.0
 
 def update_trust_score(did, new_score):
     c.execute('UPDATE did_scores SET score = ? WHERE did = ?', (new_score, did))
