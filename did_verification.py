@@ -1,12 +1,14 @@
 import re
-import argparse
+import asyncio
 
 class DIDVerifier:
     def __init__(self):
         self.did_patterns = {
             'ethr': r'^did:ethr:[0-9a-fA-F]{40}$',
             'sol': r'^did:sol:[1-9A-HJ-NP-Za-km-z]{32,44}$',
-            'w3c': r'^did:w3c:[1-9a-zA-Z_-]+$'
+            'w3c': r'^did:w3c:[1-9a-zA-Z_-]+$',
+            'agent': r'^did:agent:[a-zA-Z0-9_-]+$',  # New pattern for AI agents
+            'fed': r'^did:fed:[a-zA-Z0-9_-]+$'  # New pattern for federated systems
         }
 
     def validate(self, did):
@@ -15,6 +17,27 @@ class DIDVerifier:
             if re.match(pattern, did):
                 return key
         raise ValueError("Unsupported DID format")
+
+    async def fetch_metadata(self, did):
+        """Fetch metadata for a DID to verify its legitimacy."""
+        did_type = self.validate(did)
+        
+        if did_type in ["ethr", "sol"]:
+            return await self.fetch_onchain_metadata(did)
+        elif did_type in ["agent", "fed"]:
+            return await self.fetch_offchain_metadata(did)
+        else:
+            return {"status": "unknown", "details": "No verification method available"}
+
+    async def fetch_onchain_metadata(self, did):
+        """Mock function to simulate on-chain verification."""
+        await asyncio.sleep(1)  # Simulating async call
+        return {"status": "verified", "source": "on-chain"}
+
+    async def fetch_offchain_metadata(self, did):
+        """Mock function to simulate off-chain verification."""
+        await asyncio.sleep(1)  # Simulating async call
+        return {"status": "verified", "source": "federated verification"}
 
     def is_valid(self, did):
         """Check if the DID follows a recognized format."""
