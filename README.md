@@ -1,50 +1,108 @@
-# DIDDragon  
-## DID Validator & Trust Scoring System  
+# DIDDragon
+## Decentralized Identity Validation & Trust Scoring System
 
-This repository implements a DID Validator for Decentralized Identifiers (DIDs) and a DID Trust Scoring Module to assess and verify trustworthiness based on multiple sources. It also includes **Decentralized Trust Enforcement (DTE)** for risk flagging, trust-based policies, and a recovery system for flagged identities.  
+A robust implementation of a DID (Decentralized Identifier) validation system with integrated trust scoring and policy enforcement mechanisms. Built for high-throughput identity verification in decentralized systems.
 
-## Features  
+## Core Components
 
-### DID Validator (`did_verification.py`)  
-- **DID Validation**: Checks if the DID follows one of the supported formats (`did:ethr`, `did:sol`, `did:w3c`).  
-- **Signature Verification**: Verifies an **ECDSA signature** against the public key embedded in the DID document.  
-- **Command-Line Interface**: Provides a simple way to input and validate DIDs.  
+### DID Validator (`did_verification.py`)
+- **Format Validation**: Supports multiple DID methods (`did:ethr`, `did:sol`, `did:w3c`)
+- **Cryptographic Verification**: ECDSA signature validation against DID document public keys
+- **Async Processing**: Non-blocking validation for high-throughput scenarios
 
-### DID Trust Scoring Module (`did_trust_scoring.py`)  
-The **DID Trust Scoring Module** extends DID verification by assigning a **trust score** based on multiple verification sources, including:  
-- **On-Chain Proofs** - Evaluates blockchain activity.  
-- **Federated Verification Nodes** - Checks trust signals from decentralized identity systems.  
-- **Usage History** - Analyzes past DID activity.  
-- **Social Verification** - Assesses trustworthiness via external community signals.  
-- **Trust Ledger** - Maintains a historical record of DID interactions for recovery and long-term trust assessment.  
+### Trust Scoring Engine (`did_trust_scoring.py`)
+Multi-factor trust assessment system integrating:
+- **On-Chain Analytics**: Real-time blockchain activity evaluation
+- **Federated Node Consensus**: Distributed trust signal aggregation
+- **Usage Pattern Analysis**: Behavioral pattern recognition
+- **Social Graph Verification**: Network-based trust metrics
+- **Immutable Trust Ledger**: Cryptographically secured trust history
 
-### Decentralized Trust Enforcement (DTE) (`did_trust_enforcement.py`)  
-The **DTE system** adds **trust-based access control** to DID verification by:  
-- **Flagging Risky DIDs** - DIDs with low trust scores are **automatically flagged** for review.  
-- **Policy Engine** - Enforces **trust-based rules** (e.g., restricting low-trust DIDs from executing actions).  
-- **Dynamic Trust Score Adjustments** - Ensures that DID reputations **update in real time** based on behavior.  
+### Trust Policy Enforcement (`did_trust_enforcement.py`)
+- **Risk Detection**: Automated flagging of suspicious DIDs
+- **Policy Engine**: Configurable trust thresholds and action triggers
+- **Real-time Score Adjustment**: Dynamic trust recalculation based on behavior
+- **Transaction Rate Limiting**: Adaptive throttling based on trust scores
 
-### Identity Recovery & Self-Healing Trust (`did_trust_recovery.py`)  
-- **Trust Repair Mechanism** - Allows flagged DIDs to **recover their trust score** based on predefined verification steps.  
-- **Verification Challenge System** - Requires flagged DIDs to **prove their trustworthiness** through community validation.  
-- **Historical Trust Ledger** - Influences **recovery speed** based on past behavior, ensuring fair but robust recovery.  
-- **Automated Trust Score Adjustments** - Gradually increases scores for compliant DIDs **without manual intervention**.  
+### Recovery System (`did_trust_recovery.py`)
+- **Automated Recovery Pipeline**: Configurable verification challenges
+- **Trust Score Rehabilitation**: Gradual score restoration based on compliance
+- **Historical Analysis**: Weight-based recovery influenced by past behavior
+- **Challenge-Response Protocol**: Cryptographic proof of recovery steps
 
-## Installation  
-Ensure you have **Python 3.x** installed, along with necessary dependencies:  
-```sh
-pip install ecdsa sqlite3
+## Technical Implementation
 
-## Usage  
-### Running the DID Verification System  
-```sh
-python did_verification.py
-Running the Trust Scoring System
-python did_trust_scoring.py
-Retrieving an Existing Trust Score
+### Database Architecture
+- SQLite with WAL mode for concurrent operations
+- Optimized transaction handling with retry logic
+- Automated database maintenance and WAL checkpointing
+
+### Security Features
+- ECDSA signature verification
+- Cryptographic proof of trust scores
+- Tamper-evident trust history
+- Rate limiting and DOS protection
+
+### Performance Optimizations
+- Async/await pattern for non-blocking operations
+- Connection pooling for database operations
+- Caching layer for frequently accessed DIDs
+- Batch processing for trust score updates
+
+## Installation
+
+Requires Python 3.8+ and the following dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+### DID Validation
+```python
+from did_verification import validate_did
+result = await validate_did("did:ethr:0x123...")
+```
+
+### Trust Score Calculation
+```python
 from did_trust_scoring import get_trust_score
-score = get_trust_score("did:ethr:123456789abcdef") 
-print(f"Trust Score: {score}")
+score = await get_trust_score("did:ethr:0x123...")
+```
+
+### Policy Enforcement
+```python
+from did_trust_enforcement import enforce_policy
+result = await enforce_policy("did:ethr:0x123...", action="transfer")
+```
+
+## Configuration
+
+Environment variables:
+```bash
+TRUST_SCORE_THRESHOLD=0.7
+RECOVERY_CHALLENGE_COUNT=3
+MAX_RETRY_ATTEMPTS=5
+```
+
+## Testing
+
+Run the test suite:
+```bash
+pytest tests/ --cov=DIDDragon
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/xyz`)
+3. Commit changes (`git commit -am 'Add feature xyz'`)
+4. Push branch (`git push origin feature/xyz`)
+5. Create Pull Request
+
+## License
+
+MIT License - see LICENSE file for details
 
 
 
