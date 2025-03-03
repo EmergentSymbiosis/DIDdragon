@@ -3,6 +3,9 @@
 
 DIDDragon is an advanced trust scoring and enforcement system for decentralized identities (DIDs). It evaluates the trustworthiness of a DID based on cryptographic proofs, behavioral patterns, and policy-based enforcement.
 
+## For non-tech / VCs / interested:
+### DIDdragon: On-Chain Trust Scoring for Autonomous Agents
+As AI systems move beyond human alignment, we need a decentralized trust framework to track and verify autonomous agents. DIDdragon provides cryptographic trust scoring and policy enforcement, ensuring agents can be held accountable while expanding freely.
 ---
 
 ## 🚀 Quick Start  
